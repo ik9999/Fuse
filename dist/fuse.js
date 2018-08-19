@@ -633,7 +633,6 @@ var Fuse = function () {
       var _this = this;
 
       this.cancelled = true;
-      console.log('this.isSearching', this.isSearching);
       if (!this.isSearching) {
         this.cancelled = false;
         return Promise.resolve();
