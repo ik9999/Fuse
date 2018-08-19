@@ -632,6 +632,8 @@ var Fuse = function () {
     value: function cancel() {
       var _this = this;
 
+      this.cancelled = true;
+      console.log('this.isSearching', this.isSearching);
       if (!this.isSearching) {
         this.cancelled = false;
         return Promise.resolve();
@@ -640,6 +642,7 @@ var Fuse = function () {
         var checkIfStopped = function checkIfStopped() {
           setTimeout(function () {
             if (!_this.isSearching) {
+              _this.cancelled = false;
               resolve();
             } else {
               checkIfStopped();
@@ -658,23 +661,26 @@ var Fuse = function () {
   }, {
     key: 'search',
     value: function search(pattern) {
+      var _this2 = this;
+
       this._log('---------\nSearch pattern: "' + pattern + '"');
 
       var _prepareSearchers2 = this._prepareSearchers(pattern),
           tokenSearchers = _prepareSearchers2.tokenSearchers,
           fullSearcher = _prepareSearchers2.fullSearcher;
 
-      var _search2 = this._search(tokenSearchers, fullSearcher),
-          weights = _search2.weights,
-          results = _search2.results;
+      return this._search(tokenSearchers, fullSearcher).then(function (_ref2) {
+        var weights = _ref2.weights,
+            results = _ref2.results;
 
-      this._computeScore(weights, results);
+        _this2._computeScore(weights, results);
 
-      if (this.options.shouldSort) {
-        this._sort(results);
-      }
+        if (_this2.options.shouldSort) {
+          _this2._sort(results);
+        }
 
-      return this._format(results);
+        return _this2._format(results);
+      });
     }
   }, {
     key: '_prepareSearchers',
@@ -698,24 +704,46 @@ var Fuse = function () {
   }, {
     key: '_search',
     value: function _search() {
+      var _this3 = this;
+
       var tokenSearchers = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : [];
       var fullSearcher = arguments[1];
 
+      var iterate = function iterate(list, callbackFn, chunk) {
+        return new Promise(function (resolve) {
+          chunk = chunk || 200;
+          var index = 0;
+          var doChunk = function doChunk() {
+            if (_this3.cancelled) {
+              _this3.isSearching = false;
+              throw new Error('cancelled');
+            }
+            var cnt = chunk;
+            while (cnt-- && index < list.length) {
+              callbackFn(list[index], index);
+              ++index;
+            }
+            if (index < list.length) {
+              setTimeout(doChunk, 0);
+            } else {
+              resolve();
+            }
+          };
+          doChunk();
+        });
+      };
       var list = this.list;
       var resultMap = {};
       var results = [];
+      this.isSearching = true;
       // Check the first item in the list, if it's a string, then we assume
       // that every item in the list is also a string, and thus it's a flattened array.
       if (typeof list[0] === 'string') {
-        this.isSearching = true;
         // Iterate over every item
-        for (var i = 0, len = list.length; i < len; i += 1) {
-          if (this.cancelled) {
-            break;
-          }
-          this._analyze({
+        return iterate(list, function (val, i) {
+          _this3._analyze({
             key: '',
-            value: list[i],
+            value: val,
             record: i,
             index: i
           }, {
@@ -724,27 +752,19 @@ var Fuse = function () {
             tokenSearchers: tokenSearchers,
             fullSearcher: fullSearcher
           });
-        }
-        this.isSearching = false;
-
-        return { weights: null, results: results };
+        }).then(function () {
+          _this3.isSearching = false;
+          return { weights: null, results: results };
+        });
       }
 
       // Otherwise, the first item is an Object (hopefully), and thus the searching
       // is done on the values of the keys of each item.
       var weights = {};
-      this.isSearching = true;
-      for (var _i = 0, _len = list.length; _i < _len; _i += 1) {
-        if (this.cancelled) {
-          break;
-        }
-        var item = list[_i];
-        // Iterate over every key
-        for (var j = 0, keysLen = this.options.keys.length; j < keysLen; j += 1) {
-          if (this.cancelled) {
-            break;
-          }
-          var key = this.options.keys[j];
+      return iterate(list, function (val, i) {
+        var item = val;
+        for (var j = 0, keysLen = _this3.options.keys.length; j < keysLen; j += 1) {
+          var key = _this3.options.keys[j];
           if (typeof key !== 'string') {
             weights[key.name] = {
               weight: 1 - key.weight || 1
@@ -759,11 +779,11 @@ var Fuse = function () {
             };
           }
 
-          this._analyze({
+          _this3._analyze({
             key: key,
-            value: this.options.getFn(item, key),
+            value: _this3.options.getFn(item, key),
             record: item,
-            index: _i
+            index: i
           }, {
             resultMap: resultMap,
             results: results,
@@ -771,28 +791,29 @@ var Fuse = function () {
             fullSearcher: fullSearcher
           });
         }
-      }
-      this.isSearching = false;
+      }).then(function () {
+        _this3.isSearching = false;
 
-      return { weights: weights, results: results };
+        return { weights: weights, results: results };
+      });
     }
   }, {
     key: '_analyze',
-    value: function _analyze(_ref2, _ref3) {
-      var key = _ref2.key,
-          _ref2$arrayIndex = _ref2.arrayIndex,
-          arrayIndex = _ref2$arrayIndex === undefined ? -1 : _ref2$arrayIndex,
-          value = _ref2.value,
-          record = _ref2.record,
-          index = _ref2.index;
-      var _ref3$tokenSearchers = _ref3.tokenSearchers,
-          tokenSearchers = _ref3$tokenSearchers === undefined ? [] : _ref3$tokenSearchers,
-          _ref3$fullSearcher = _ref3.fullSearcher,
-          fullSearcher = _ref3$fullSearcher === undefined ? [] : _ref3$fullSearcher,
-          _ref3$resultMap = _ref3.resultMap,
-          resultMap = _ref3$resultMap === undefined ? {} : _ref3$resultMap,
-          _ref3$results = _ref3.results,
-          results = _ref3$results === undefined ? [] : _ref3$results;
+    value: function _analyze(_ref3, _ref4) {
+      var key = _ref3.key,
+          _ref3$arrayIndex = _ref3.arrayIndex,
+          arrayIndex = _ref3$arrayIndex === undefined ? -1 : _ref3$arrayIndex,
+          value = _ref3.value,
+          record = _ref3.record,
+          index = _ref3.index;
+      var _ref4$tokenSearchers = _ref4.tokenSearchers,
+          tokenSearchers = _ref4$tokenSearchers === undefined ? [] : _ref4$tokenSearchers,
+          _ref4$fullSearcher = _ref4.fullSearcher,
+          fullSearcher = _ref4$fullSearcher === undefined ? [] : _ref4$fullSearcher,
+          _ref4$resultMap = _ref4.resultMap,
+          resultMap = _ref4$resultMap === undefined ? {} : _ref4$resultMap,
+          _ref4$results = _ref4.results,
+          results = _ref4$results === undefined ? [] : _ref4$results;
 
       // Check if the texvaluet can be searched
       if (value === undefined || value === null) {
@@ -847,8 +868,8 @@ var Fuse = function () {
 
           averageScore = scores[0];
           var scoresLen = scores.length;
-          for (var _i2 = 1; _i2 < scoresLen; _i2 += 1) {
-            averageScore += scores[_i2];
+          for (var _i = 1; _i < scoresLen; _i += 1) {
+            averageScore += scores[_i];
           }
           averageScore = averageScore / scoresLen;
 
@@ -897,11 +918,11 @@ var Fuse = function () {
           }
         }
       } else if (isArray(value)) {
-        for (var _i3 = 0, len = value.length; _i3 < len; _i3 += 1) {
+        for (var _i2 = 0, len = value.length; _i2 < len; _i2 += 1) {
           this._analyze({
             key: key,
-            arrayIndex: _i3,
-            value: value[_i3],
+            arrayIndex: _i2,
+            value: value[_i2],
             record: record,
             index: index
           }, {
@@ -1009,7 +1030,7 @@ var Fuse = function () {
           item: result.item
         };
 
-        for (var j = 0, _len2 = transformers.length; j < _len2; j += 1) {
+        for (var j = 0, _len = transformers.length; j < _len; j += 1) {
           transformers[j](result, data);
         }
 

@@ -80,6 +80,7 @@ class Fuse {
   }
 
   cancel() {
+    this.cancelled = true;
     if (!this.isSearching) {
       this.cancelled = false;
       return Promise.resolve();
@@ -88,6 +89,7 @@ class Fuse {
       let checkIfStopped = () => {
         setTimeout(() => {
           if (!this.isSearching) {
+            this.cancelled = false;
             resolve();
           } else {
             checkIfStopped();
@@ -111,15 +113,15 @@ class Fuse {
       fullSearcher
     } = this._prepareSearchers(pattern)
 
-    let { weights, results } = this._search(tokenSearchers, fullSearcher)
+    return this._search(tokenSearchers, fullSearcher).then(({ weights, results }) => {
+      this._computeScore(weights, results)
 
-    this._computeScore(weights, results)
+      if (this.options.shouldSort) {
+        this._sort(results)
+      }
 
-    if (this.options.shouldSort) {
-      this._sort(results)
-    }
-
-    return this._format(results)
+      return this._format(results)
+    });
   }
 
   _prepareSearchers (pattern = '') {
@@ -139,21 +141,41 @@ class Fuse {
   }
 
   _search (tokenSearchers = [], fullSearcher) {
+    let iterate = (list, callbackFn, chunk) => {
+      return new Promise((resolve) => {
+        chunk = chunk || 200;
+        let index = 0;
+        let doChunk = () => {
+          if (this.cancelled) {
+            this.isSearching = false;
+            throw new Error('cancelled');
+          }
+          var cnt = chunk;
+          while (cnt-- && index < list.length) {
+            callbackFn(list[index], index)
+            ++index;
+          }
+          if (index < list.length) {
+            setTimeout(doChunk, 0);
+          } else {
+            resolve();
+          }
+        } 
+        doChunk();
+      })
+    };
     const list = this.list
     const resultMap = {}
     const results = []
+    this.isSearching = true;
     // Check the first item in the list, if it's a string, then we assume
     // that every item in the list is also a string, and thus it's a flattened array.
     if (typeof list[0] === 'string') {
-      this.isSearching = true;
       // Iterate over every item
-      for (let i = 0, len = list.length; i < len; i += 1) {
-        if (this.cancelled) {
-          break
-        }
+      return iterate(list, (val, i) => {
         this._analyze({
           key: '',
-          value: list[i],
+          value: val,
           record: i,
           index: i
         }, {
@@ -161,27 +183,19 @@ class Fuse {
           results,
           tokenSearchers,
           fullSearcher
-        })
-      }
-      this.isSearching = false;
-
-      return { weights: null, results }
+        });
+      }).then(() => {
+        this.isSearching = false;
+        return { weights: null, results }
+      });
     }
 
     // Otherwise, the first item is an Object (hopefully), and thus the searching
     // is done on the values of the keys of each item.
     const weights = {}
-    this.isSearching = true;
-    for (let i = 0, len = list.length; i < len; i += 1) {
-      if (this.cancelled) {
-        break
-      }
-      let item = list[i]
-      // Iterate over every key
+    return iterate(list, (val, i) => {
+      let item = val
       for (let j = 0, keysLen = this.options.keys.length; j < keysLen; j += 1) {
-        if (this.cancelled) {
-          break
-        }
         let key = this.options.keys[j]
         if (typeof key !== 'string') {
           weights[key.name] = {
@@ -209,10 +223,11 @@ class Fuse {
           fullSearcher
         })
       }
-    }
-    this.isSearching = false;
+    }).then(() => {
+      this.isSearching = false;
 
-    return { weights, results }
+      return { weights, results }
+    });
   }
 
   _analyze ({ key, arrayIndex = -1, value, record, index }, { tokenSearchers = [], fullSearcher = [], resultMap = {}, results = [] }) {
