@@ -50,7 +50,10 @@ class Fuse {
     includeScore = false,
 
     // Will print to the console. Useful for debugging.
-    verbose = false
+    verbose = false,
+
+    cancelled = false,
+    isSearching = false
   }) {
     this.options = {
       location,
@@ -74,6 +77,25 @@ class Fuse {
     }
 
     this.setCollection(list)
+  }
+
+  cancel() {
+    if (!this.isSearching) {
+      this.cancelled = false;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let checkIfStopped = () => {
+        setTimeout(() => {
+          if (!this.isSearching) {
+            resolve();
+          } else {
+            checkIfStopped();
+          }
+        }, 0);
+      };
+      checkIfStopped();
+    })
   }
 
   setCollection (list) {
@@ -120,12 +142,15 @@ class Fuse {
     const list = this.list
     const resultMap = {}
     const results = []
-
     // Check the first item in the list, if it's a string, then we assume
     // that every item in the list is also a string, and thus it's a flattened array.
     if (typeof list[0] === 'string') {
+      this.isSearching = true;
       // Iterate over every item
       for (let i = 0, len = list.length; i < len; i += 1) {
+        if (this.cancelled) {
+          break
+        }
         this._analyze({
           key: '',
           value: list[i],
@@ -138,6 +163,7 @@ class Fuse {
           fullSearcher
         })
       }
+      this.isSearching = false;
 
       return { weights: null, results }
     }
@@ -145,10 +171,17 @@ class Fuse {
     // Otherwise, the first item is an Object (hopefully), and thus the searching
     // is done on the values of the keys of each item.
     const weights = {}
+    this.isSearching = true;
     for (let i = 0, len = list.length; i < len; i += 1) {
+      if (this.cancelled) {
+        break
+      }
       let item = list[i]
       // Iterate over every key
       for (let j = 0, keysLen = this.options.keys.length; j < keysLen; j += 1) {
+        if (this.cancelled) {
+          break
+        }
         let key = this.options.keys[j]
         if (typeof key !== 'string') {
           weights[key.name] = {
@@ -177,6 +210,7 @@ class Fuse {
         })
       }
     }
+    this.isSearching = false;
 
     return { weights, results }
   }

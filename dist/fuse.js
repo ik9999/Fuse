@@ -595,7 +595,11 @@ var Fuse = function () {
         _ref$includeScore = _ref.includeScore,
         includeScore = _ref$includeScore === undefined ? false : _ref$includeScore,
         _ref$verbose = _ref.verbose,
-        verbose = _ref$verbose === undefined ? false : _ref$verbose;
+        verbose = _ref$verbose === undefined ? false : _ref$verbose,
+        _ref$cancelled = _ref.cancelled,
+        cancelled = _ref$cancelled === undefined ? false : _ref$cancelled,
+        _ref$isSearching = _ref.isSearching,
+        isSearching = _ref$isSearching === undefined ? false : _ref$isSearching;
 
     _classCallCheck(this, Fuse);
 
@@ -624,6 +628,28 @@ var Fuse = function () {
   }
 
   _createClass(Fuse, [{
+    key: 'cancel',
+    value: function cancel() {
+      var _this = this;
+
+      if (!this.isSearching) {
+        this.cancelled = false;
+        return Promise.resolve();
+      }
+      return new Promise(function (resolve) {
+        var checkIfStopped = function checkIfStopped() {
+          setTimeout(function () {
+            if (!_this.isSearching) {
+              resolve();
+            } else {
+              checkIfStopped();
+            }
+          }, 0);
+        };
+        checkIfStopped();
+      });
+    }
+  }, {
     key: 'setCollection',
     value: function setCollection(list) {
       this.list = list;
@@ -678,12 +704,15 @@ var Fuse = function () {
       var list = this.list;
       var resultMap = {};
       var results = [];
-
       // Check the first item in the list, if it's a string, then we assume
       // that every item in the list is also a string, and thus it's a flattened array.
       if (typeof list[0] === 'string') {
+        this.isSearching = true;
         // Iterate over every item
         for (var i = 0, len = list.length; i < len; i += 1) {
+          if (this.cancelled) {
+            break;
+          }
           this._analyze({
             key: '',
             value: list[i],
@@ -696,6 +725,7 @@ var Fuse = function () {
             fullSearcher: fullSearcher
           });
         }
+        this.isSearching = false;
 
         return { weights: null, results: results };
       }
@@ -703,10 +733,17 @@ var Fuse = function () {
       // Otherwise, the first item is an Object (hopefully), and thus the searching
       // is done on the values of the keys of each item.
       var weights = {};
+      this.isSearching = true;
       for (var _i = 0, _len = list.length; _i < _len; _i += 1) {
+        if (this.cancelled) {
+          break;
+        }
         var item = list[_i];
         // Iterate over every key
         for (var j = 0, keysLen = this.options.keys.length; j < keysLen; j += 1) {
+          if (this.cancelled) {
+            break;
+          }
           var key = this.options.keys[j];
           if (typeof key !== 'string') {
             weights[key.name] = {
@@ -735,6 +772,7 @@ var Fuse = function () {
           });
         }
       }
+      this.isSearching = false;
 
       return { weights: weights, results: results };
     }
